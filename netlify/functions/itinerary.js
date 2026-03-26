@@ -68,7 +68,7 @@ exports.handler = async (event) => {
   const validatedDestination = destinationCheck.formatted || destination;
 
   // ----------------------------------------------------------------
-  //  TOOL 1 — Real Google Maps Places API
+  //  TOOL 1 — Real Google Maps: attractions & restaurants
   // ----------------------------------------------------------------
   async function getAttractions(dest) {
     if (!googleKey) return getSampleAttractions(dest);
@@ -116,72 +116,69 @@ exports.handler = async (event) => {
       { name: `${city} History Museum`, rating: 4.5, address: `${city}`, types: ['museum'] },
       { name: `${city} Waterfront`, rating: 4.8, address: `${city}`, types: ['landmark'] },
       { name: `${city} Central Park`, rating: 4.6, address: `${city}`, types: ['park'] },
-      { name: `${city} Old Town District`, rating: 4.4, address: `${city}`, types: ['neighborhood'] },
+      { name: `${city} Old Town`, rating: 4.4, address: `${city}`, types: ['neighborhood'] },
     ];
   }
 
   // ----------------------------------------------------------------
-  //  Gather Google Maps data
+  //  Gather Google Maps data in parallel
   // ----------------------------------------------------------------
   const [attractions, restaurants] = await Promise.all([
     getAttractions(validatedDestination),
     getRestaurants(validatedDestination)
   ]);
 
-  // ----------------------------------------------------------------
-  //  TOOL 2 — Claude with web search for real flights & hotels
-  // ----------------------------------------------------------------
   const departureCity = validatedDeparture.split(',')[0].trim();
   const destinationCity = validatedDestination.split(',')[0].trim();
   const flightBudget = Math.round(budget * 0.35);
   const hotelNightly = Math.round((budget * 0.40) / days);
 
-  const prompt = `You are an expert travel planner with access to web search. A user wants to plan a trip and needs real, accurate flight and hotel information.
+  // ----------------------------------------------------------------
+  //  TOOL 2 — Claude with web search for REAL flights AND hotels
+  //  No sample data — everything comes from web search
+  // ----------------------------------------------------------------
+  const prompt = `You are an expert travel planner. Use your web search tool to find REAL flight and hotel options for this trip. Do not make up or estimate prices — search for actual current information.
 
 USER TRIP DETAILS:
 - Departing from: ${validatedDeparture}
 - Destination: ${validatedDestination}
 - Total budget: $${Number(budget).toLocaleString()}
 - Trip length: ${days} days
-- Flight budget: up to $${flightBudget} roundtrip
-- Hotel budget: up to $${hotelNightly}/night
+- Max flight budget: $${flightBudget} roundtrip per person
+- Max hotel budget: $${hotelNightly}/night
 
-REAL ATTRACTIONS from Google Maps:
-${JSON.stringify(attractions, null, 2)}
+STEP 1 — Search for: "roundtrip flights ${departureCity} to ${destinationCity} 2026 price"
+Find real airlines, real typical price ranges, and flight duration.
 
-REAL RESTAURANTS from Google Maps:
-${JSON.stringify(restaurants, null, 2)}
+STEP 2 — Search for: "best hotels in ${destinationCity} under $${hotelNightly} per night"
+Find real hotel names, real nightly rates, and guest ratings. Do NOT use "Hyatt Place [city]" or any generic placeholder — only use hotel names you actually find in search results.
 
-YOUR TASKS:
-1. Use web search to find real typical flight prices from ${departureCity} to ${destinationCity} — look for major airlines, typical roundtrip prices, and flight duration
-2. Use web search to find real hotels in ${destinationCity} under $${hotelNightly}/night — look for well-reviewed options with their actual names and typical prices
-3. Build a detailed day-by-day itinerary using the real Google Maps attractions and restaurants above
-4. Keep total cost within $${Number(budget).toLocaleString()}
-5. Write in a friendly, practical tone
+STEP 3 — Use these REAL attractions and restaurants from Google Maps to build the itinerary:
+Attractions: ${JSON.stringify(attractions, null, 2)}
+Restaurants: ${JSON.stringify(restaurants, null, 2)}
 
 FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 
 ## Trip Summary
 [${validatedDeparture} to ${validatedDestination}, ${days} days, estimated total cost]
 
-## Flight
-[Real airline options found, typical price range, flight duration, booking tip]
+## Flights
+[List 2-3 real airlines with real typical price ranges found in search. Include flight duration and a booking tip.]
 
-## Hotel
-[Real hotel names found, typical nightly rate, why it's a good fit, booking tip]
+## Hotels
+[List 2-3 real hotels found in search with real nightly rates and a brief reason why each is a good fit. No generic placeholder names.]
 
 ## Day-by-Day Itinerary
 [For each day: Morning / Afternoon / Evening using the real Google Maps places above]
 
 ## Budget Breakdown
-[Flights | Hotel | Food & Activities | Total]
+[Flights | Hotel (${days} nights) | Food & Activities | Total]
 
 ## Local Tips
 [3 practical tips specific to ${validatedDestination}]`;
 
   try {
-    // First call — Claude searches the web for flights and hotels
-    const searchResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -190,36 +187,33 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 4000,
+        max_tokens: 5000,
         tools: [{ type: 'web_search_20250305', name: 'web_search' }],
         messages: [{ role: 'user', content: prompt }]
       })
     });
 
-    if (!searchResponse.ok) {
-      const err = await searchResponse.json();
+    if (!response.ok) {
+      const err = await response.json();
       throw new Error(err.error?.message || 'Claude API error');
     }
 
-    const searchData = await searchResponse.json();
+    let data = await response.json();
+    let messages = [{ role: 'user', content: prompt }];
 
-    // Extract the final text response from Claude
-    let itinerary = '';
-    for (const block of searchData.content) {
-      if (block.type === 'text') {
-        itinerary += block.text;
-      }
-    }
+    // Keep going until Claude finishes all searches and gives final answer
+    while (data.stop_reason === 'tool_use') {
+      messages.push({ role: 'assistant', content: data.content });
 
-    // If Claude stopped to use tools, send the full conversation back for final answer
-    if (searchData.stop_reason === 'tool_use') {
-      const toolResults = searchData.content
+      const toolResults = data.content
         .filter(b => b.type === 'tool_use')
         .map(b => ({
           type: 'tool_result',
           tool_use_id: b.id,
-          content: b.input?.query ? `Search results for: ${b.input.query}` : 'Search completed'
+          content: `Search completed for: ${b.input?.query || 'query'}`
         }));
+
+      messages.push({ role: 'user', content: toolResults });
 
       const followUp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -230,24 +224,20 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 3000,
+          max_tokens: 5000,
           tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-          messages: [
-            { role: 'user', content: prompt },
-            { role: 'assistant', content: searchData.content },
-            { role: 'user', content: toolResults }
-          ]
+          messages
         })
       });
 
-      const followUpData = await followUp.json();
-      itinerary = '';
-      for (const block of followUpData.content) {
-        if (block.type === 'text') {
-          itinerary += block.text;
-        }
-      }
+      data = await followUp.json();
     }
+
+    // Extract final text
+    const itinerary = data.content
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('\n');
 
     return {
       statusCode: 200,
