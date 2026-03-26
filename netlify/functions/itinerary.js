@@ -9,11 +9,57 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing required fields.' }) };
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const googleKey = process.env.GOOGLE_MAPS_API_KEY;
+
+  if (!anthropicKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Server not configured.' }) };
   }
 
+  // ----------------------------------------------------------------
+  //  TOOL 1 — Real Google Maps Places API
+  // ----------------------------------------------------------------
+  async function getAttractions(destination) {
+    if (!googleKey) return getSampleAttractions(destination);
+    try {
+      const query = encodeURIComponent(`top tourist attractions in ${destination}`);
+      const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${googleKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.status !== 'OK') return getSampleAttractions(destination);
+      return data.results.slice(0, 8).map(p => ({
+        name: p.name,
+        rating: p.rating || 'N/A',
+        address: p.formatted_address || 'N/A',
+        types: p.types || []
+      }));
+    } catch (e) {
+      return getSampleAttractions(destination);
+    }
+  }
+
+  async function getRestaurants(destination) {
+    if (!googleKey) return [];
+    try {
+      const query = encodeURIComponent(`best restaurants in ${destination}`);
+      const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&type=restaurant&key=${googleKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.status !== 'OK') return [];
+      return data.results.slice(0, 6).map(p => ({
+        name: p.name,
+        rating: p.rating || 'N/A',
+        address: p.formatted_address || 'N/A',
+        price_level: p.price_level || 'N/A'
+      }));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // ----------------------------------------------------------------
+  //  TOOL 2 — Flight & hotel data (budget-scaled)
+  // ----------------------------------------------------------------
   function getSampleFlights(destination, budget) {
     const city = destination.split(',')[0].trim();
     return [
@@ -36,19 +82,30 @@ exports.handler = async (event) => {
   function getSampleAttractions(destination) {
     const city = destination.split(',')[0].trim();
     return [
-      { name: `${city} Art Museum`, rating: 4.7 },
-      { name: `${city} Botanical Garden`, rating: 4.6 },
-      { name: `${city} History Museum`, rating: 4.5 },
-      { name: `${city} Waterfront`, rating: 4.8 },
-      { name: `${city} Central Park`, rating: 4.6 },
-      { name: `${city} Old Town District`, rating: 4.4 },
+      { name: `${city} Art Museum`, rating: 4.7, address: `Downtown ${city}`, types: ['museum'] },
+      { name: `${city} Botanical Garden`, rating: 4.6, address: `${city}`, types: ['park'] },
+      { name: `${city} History Museum`, rating: 4.5, address: `${city}`, types: ['museum'] },
+      { name: `${city} Waterfront`, rating: 4.8, address: `${city}`, types: ['landmark'] },
+      { name: `${city} Central Park`, rating: 4.6, address: `${city}`, types: ['park'] },
+      { name: `${city} Old Town District`, rating: 4.4, address: `${city}`, types: ['neighborhood'] },
     ];
   }
 
+  // ----------------------------------------------------------------
+  //  Gather all data
+  // ----------------------------------------------------------------
+  const [attractions, restaurants] = await Promise.all([
+    getAttractions(destination),
+    getRestaurants(destination)
+  ]);
+
   const flights = getSampleFlights(destination, budget);
   const hotels = getSampleHotels(destination, budget, days);
-  const attractions = getSampleAttractions(destination);
+  const usingRealData = !!googleKey;
 
+  // ----------------------------------------------------------------
+  //  Claude synthesizes everything
+  // ----------------------------------------------------------------
   const prompt = `You are an expert travel planner. Build a complete, practical day-by-day US travel itinerary from this research data.
 
 USER INPUT:
@@ -62,16 +119,21 @@ ${JSON.stringify(flights, null, 2)}
 HOTEL OPTIONS:
 ${JSON.stringify(hotels, null, 2)}
 
-TOP ATTRACTIONS:
+TOP ATTRACTIONS (${usingRealData ? 'real data from Google Maps' : 'sample data'}):
 ${JSON.stringify(attractions, null, 2)}
+
+TOP RESTAURANTS (${usingRealData ? 'real data from Google Maps' : 'sample data'}):
+${JSON.stringify(restaurants, null, 2)}
 
 YOUR TASK:
 1. Pick the best-value flight and hotel within budget
-2. Build a detailed day-by-day itinerary using the attractions
+2. Build a detailed day-by-day itinerary using the real attractions and restaurants above
 3. Track spending and stay within the $${Number(budget).toLocaleString()} budget
-4. Write in a friendly, practical tone
+4. Write in a friendly, practical tone — like a knowledgeable friend giving advice
+5. Reference the specific real place names from the data above
 
-FORMAT:
+FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+
 ## Trip Summary
 [Destination, ${days} days, estimated total cost]
 
@@ -82,7 +144,7 @@ FORMAT:
 [Chosen hotel, nightly rate, total lodging cost, brief reason]
 
 ## Day-by-Day Itinerary
-[For each day: Morning / Afternoon / Evening with specific places]
+[For each day: Morning / Afternoon / Evening with specific real place names]
 
 ## Budget Breakdown
 [Flights | Hotel | Food & Activities | Total]
@@ -95,7 +157,7 @@ FORMAT:
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
+        'x-api-key': anthropicKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
@@ -116,7 +178,7 @@ FORMAT:
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ itinerary })
+      body: JSON.stringify({ itinerary, usingRealData })
     };
 
   } catch (err) {
