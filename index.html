@@ -361,9 +361,15 @@
     <div class="card">
       <div class="card-title">Where are you headed?</div>
 
-      <div class="form-group" style="margin-bottom: 1rem;">
-        <label>Destination</label>
-        <input type="text" id="destination" placeholder="e.g. Chicago, IL or Austin, TX">
+      <div class="form-grid" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label>Departing From</label>
+          <input type="text" id="departure" placeholder="e.g. Minneapolis, MN">
+        </div>
+        <div class="form-group">
+          <label>Destination</label>
+          <input type="text" id="destination" placeholder="e.g. Chicago, IL">
+        </div>
       </div>
 
       <div class="form-grid">
@@ -475,10 +481,12 @@ function renderItinerary(text) {
 
 async function generateItinerary() {
   clearError();
+  const departure = document.getElementById('departure').value.trim();
   const destination = document.getElementById('destination').value.trim();
   const budget = parseFloat(document.getElementById('budget').value);
   const days = parseInt(document.getElementById('days').value);
 
+  if (!departure) return showError('Please enter your departure city.');
   if (!destination) return showError('Please enter a destination.');
   if (!budget || budget < 200) return showError('Please enter a valid budget (minimum $200).');
   if (!days || days < 1) return showError('Please enter a valid trip length.');
@@ -494,7 +502,7 @@ async function generateItinerary() {
     const res = await fetch('/api/itinerary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ destination, budget, days })
+      body: JSON.stringify({ departure, destination, budget, days })
     });
 
     clearInterval(timer);
@@ -525,6 +533,7 @@ function reset() {
   document.getElementById('result-section').style.display = 'none';
   document.getElementById('form-section').style.display = 'block';
   document.getElementById('generate-btn').disabled = false;
+  document.getElementById('departure').value = '';
   document.getElementById('destination').value = '';
   document.getElementById('budget').value = '';
   document.getElementById('days').value = '';
