@@ -3,9 +3,9 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  const { destination, budget, days } = JSON.parse(event.body || '{}');
+  const { departure, destination, budget, days } = JSON.parse(event.body || '{}');
 
-  if (!destination || !budget || !days) {
+  if (!departure || !destination || !budget || !days) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing required fields.' }) };
   }
 
@@ -15,6 +15,57 @@ exports.handler = async (event) => {
   if (!anthropicKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Server not configured.' }) };
   }
+
+  // ----------------------------------------------------------------
+  //  CITY VALIDATION — Google Maps Geocoding API
+  // ----------------------------------------------------------------
+  async function validateCity(cityInput) {
+    if (!googleKey) return { valid: true, formatted: cityInput };
+    try {
+      const query = encodeURIComponent(cityInput);
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${googleKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.status !== 'OK' || !data.results.length) {
+        return { valid: false, formatted: null };
+      }
+      const result = data.results[0];
+      const formatted = result.formatted_address;
+      const country = result.address_components.find(c => c.types.includes('country'));
+      const isUS = country && country.short_name === 'US';
+      if (!isUS) return { valid: false, formatted, notUS: true };
+      return { valid: true, formatted };
+    } catch (e) {
+      return { valid: true, formatted: cityInput };
+    }
+  }
+
+  const [departureCheck, destinationCheck] = await Promise.all([
+    validateCity(departure),
+    validateCity(destination)
+  ]);
+
+  if (!departureCheck.valid) {
+    const msg = departureCheck.notUS
+      ? `"${departure}" doesn't appear to be a US city. TripMind currently supports domestic US travel only.`
+      : `We couldn't find "${departure}". Please check the spelling — e.g. "Minneapolis, MN".`;
+    return { statusCode: 400, body: JSON.stringify({ error: msg }) };
+  }
+
+  if (!destinationCheck.valid) {
+    const msg = destinationCheck.notUS
+      ? `"${destination}" doesn't appear to be a US city. TripMind currently supports domestic US travel only.`
+      : `We couldn't find "${destination}". Please check the spelling — e.g. "Chicago, IL".`;
+    return { statusCode: 400, body: JSON.stringify({ error: msg }) };
+  }
+
+  if (departureCheck.formatted && destinationCheck.formatted &&
+      departureCheck.formatted === destinationCheck.formatted) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'Departure and destination appear to be the same city. Please enter different cities.' }) };
+  }
+
+  const validatedDeparture = departureCheck.formatted || departure;
+  const validatedDestination = destinationCheck.formatted || destination;
 
   // ----------------------------------------------------------------
   //  TOOL 1 — Real Google Maps Places API
@@ -60,12 +111,13 @@ exports.handler = async (event) => {
   // ----------------------------------------------------------------
   //  TOOL 2 — Flight & hotel data (budget-scaled)
   // ----------------------------------------------------------------
-  function getSampleFlights(destination, budget) {
-    const city = destination.split(',')[0].trim();
+  function getSampleFlights(departure, destination, budget) {
+    const from = departure.split(',')[0].trim().substring(0, 3).toUpperCase();
+    const to = destination.split(',')[0].trim().substring(0, 3).toUpperCase();
     return [
-      { airline: 'Delta Airlines', route: `MSP → ${city}`, price_roundtrip: Math.round(budget * 0.28), stops: 'Nonstop', departure: '7:00 AM' },
-      { airline: 'United Airlines', route: `MSP → ${city}`, price_roundtrip: Math.round(budget * 0.22), stops: '1 stop', departure: '11:15 AM' },
-      { airline: 'American Airlines', route: `MSP → ${city}`, price_roundtrip: Math.round(budget * 0.25), stops: 'Nonstop', departure: '6:00 PM' },
+      { airline: 'Delta Airlines', route: `${from} → ${to}`, price_roundtrip: Math.round(budget * 0.28), stops: 'Nonstop', departure_time: '7:00 AM' },
+      { airline: 'United Airlines', route: `${from} → ${to}`, price_roundtrip: Math.round(budget * 0.22), stops: '1 stop', departure_time: '11:15 AM' },
+      { airline: 'American Airlines', route: `${from} → ${to}`, price_roundtrip: Math.round(budget * 0.25), stops: 'Nonstop', departure_time: '6:00 PM' },
     ].filter(f => f.price_roundtrip <= budget * 0.4);
   }
 
@@ -95,12 +147,12 @@ exports.handler = async (event) => {
   //  Gather all data
   // ----------------------------------------------------------------
   const [attractions, restaurants] = await Promise.all([
-    getAttractions(destination),
-    getRestaurants(destination)
+    getAttractions(validatedDestination),
+    getRestaurants(validatedDestination)
   ]);
 
-  const flights = getSampleFlights(destination, budget);
-  const hotels = getSampleHotels(destination, budget, days);
+  const flights = getSampleFlights(validatedDeparture, validatedDestination, budget);
+  const hotels = getSampleHotels(validatedDestination, budget, days);
   const usingRealData = !!googleKey;
 
   // ----------------------------------------------------------------
@@ -109,7 +161,8 @@ exports.handler = async (event) => {
   const prompt = `You are an expert travel planner. Build a complete, practical day-by-day US travel itinerary from this research data.
 
 USER INPUT:
-- Destination: ${destination}
+- Departing from: ${validatedDeparture}
+- Destination: ${validatedDestination}
 - Total budget: $${Number(budget).toLocaleString()}
 - Trip length: ${days} days
 
@@ -150,7 +203,7 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 [Flights | Hotel | Food & Activities | Total]
 
 ## Local Tips
-[3 practical tips specific to ${destination}]`;
+[3 practical tips specific to ${validatedDestination}]`;
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -178,7 +231,7 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ itinerary, usingRealData })
+      body: JSON.stringify({ itinerary, usingRealData, validatedDeparture, validatedDestination })
     };
 
   } catch (err) {
