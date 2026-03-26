@@ -65,31 +65,27 @@ exports.handler = async (event) => {
   const validatedDestination = destinationCheck.formatted || destination;
 
   // ----------------------------------------------------------------
-  //  GOOGLE MAPS — attractions, restaurants with photos & place IDs
+  //  GOOGLE MAPS — real attractions & restaurants with photos
   // ----------------------------------------------------------------
-  async function getPlaces(query, type = null) {
+  async function getPlaces(query, maxResults = 8) {
     if (!googleKey) return [];
     try {
       const q = encodeURIComponent(query);
-      const typeParam = type ? `&type=${type}` : '';
-      const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${q}${typeParam}&key=${googleKey}`;
+      const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${q}&key=${googleKey}`;
       const res = await fetch(url);
       const data = await res.json();
       if (data.status !== 'OK') return [];
-      return data.results.slice(0, 8).map(p => {
+      return data.results.slice(0, maxResults).map(p => {
         const photoRef = p.photos && p.photos[0] ? p.photos[0].photo_reference : null;
         const photoUrl = photoRef
           ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${photoRef}&key=${googleKey}`
           : null;
-        const mapsUrl = `https://www.google.com/maps/place/?q=place_id:${p.place_id}`;
         return {
           name: p.name,
           rating: p.rating || 'N/A',
           address: p.formatted_address || 'N/A',
-          place_id: p.place_id,
-          photo_url: photoUrl,
-          maps_url: mapsUrl,
-          types: p.types || []
+          maps_url: `https://www.google.com/maps/place/?q=place_id:${p.place_id}`,
+          photo_url: photoUrl
         };
       });
     } catch (e) {
@@ -99,50 +95,53 @@ exports.handler = async (event) => {
 
   const [attractions, restaurants] = await Promise.all([
     getPlaces(`top tourist attractions in ${validatedDestination}`),
-    getPlaces(`best restaurants in ${validatedDestination}`, 'restaurant')
+    getPlaces(`best restaurants in ${validatedDestination}`, 6)
   ]);
 
-  const destinationCity = validatedDestination.split(',')[0].trim();
-  const departureCity = validatedDeparture.split(',')[0].trim();
   const flightBudget = Math.round(budget * 0.35);
   const hotelNightly = Math.round((budget * 0.40) / days);
+  const departureCity = validatedDeparture.split(',')[0].trim();
+  const destinationCity = validatedDestination.split(',')[0].trim();
 
   // ----------------------------------------------------------------
-  //  CLAUDE with web search — returns structured JSON
+  //  CLAUDE — uses knowledge (no web search, stays under 10s)
+  //  Returns structured JSON
   // ----------------------------------------------------------------
-  const prompt = `You are an expert travel planner. Use web search to find REAL flight and hotel info. Return a structured JSON response only.
+  const prompt = `You are an expert US travel planner with deep knowledge of flights, hotels, and destinations. Generate a realistic travel plan using your knowledge — do not search the web.
 
 TRIP:
 - From: ${validatedDeparture}
 - To: ${validatedDestination}
-- Budget: $${Number(budget).toLocaleString()}
+- Total budget: $${Number(budget).toLocaleString()}
 - Days: ${days}
 - Max flight budget: $${flightBudget} roundtrip
 - Max hotel budget: $${hotelNightly}/night
 
-STEP 1: Search "roundtrip flights ${departureCity} to ${destinationCity} 2026 price"
-STEP 2: Search "best hotels ${destinationCity} under $${hotelNightly} per night reviews"
+REAL PLACES from Google Maps (use these exactly for the itinerary):
+Attractions: ${JSON.stringify(attractions.map(a => ({ name: a.name, rating: a.rating, maps_url: a.maps_url })))}
+Restaurants: ${JSON.stringify(restaurants.map(r => ({ name: r.name, rating: r.rating, maps_url: r.maps_url })))}
 
-REAL PLACES from Google Maps (use these for the itinerary, include name and maps_url exactly as given):
-Attractions: ${JSON.stringify(attractions.map(a => ({ name: a.name, rating: a.rating, address: a.address, maps_url: a.maps_url })))}
-Restaurants: ${JSON.stringify(restaurants.map(r => ({ name: r.name, rating: r.rating, address: r.address, maps_url: r.maps_url })))}
+Using your knowledge of this specific route (${departureCity} to ${destinationCity}), provide:
+1. Realistic flight options with typical prices for this route (use real airlines that serve this route)
+2. Real hotel names in ${destinationCity} that fit the budget (use actual well-known hotels)
+3. A day-by-day itinerary using the real Google Maps places above
 
-Return ONLY valid JSON in this exact structure, no markdown, no extra text:
+Return ONLY valid JSON, no markdown, no extra text:
 {
-  "summary": "string describing the trip and total estimated cost",
+  "summary": "string",
   "flights": [
-    { "airline": "string", "price": "string e.g. $97-$142 roundtrip", "duration": "string", "tip": "string" }
+    { "airline": "string", "price": "string", "duration": "string", "tip": "string" }
   ],
   "hotels": [
-    { "name": "real hotel name from search", "price": "string e.g. $99/night", "rating": "string", "highlight": "string", "tip": "string" }
+    { "name": "real hotel name", "price": "string e.g. $120/night", "rating": "string", "highlight": "string" }
   ],
   "days": [
     {
       "day": 1,
-      "title": "string e.g. Arrival & The Loop",
-      "morning": { "activity": "string", "place": "exact place name from Google Maps list", "maps_url": "exact maps_url from Google Maps list or empty string" },
-      "afternoon": { "activity": "string", "place": "exact place name", "maps_url": "exact maps_url or empty string" },
-      "evening": { "activity": "string", "place": "exact restaurant name", "maps_url": "exact maps_url or empty string" }
+      "title": "string",
+      "morning": { "activity": "string", "place": "exact name from Google Maps list above", "maps_url": "exact maps_url from list" },
+      "afternoon": { "activity": "string", "place": "exact name", "maps_url": "exact maps_url" },
+      "evening": { "activity": "string", "place": "exact restaurant name", "maps_url": "exact maps_url" }
     }
   ],
   "budget_breakdown": {
@@ -164,8 +163,7 @@ Return ONLY valid JSON in this exact structure, no markdown, no extra text:
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 5000,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }]
       })
     });
@@ -175,29 +173,14 @@ Return ONLY valid JSON in this exact structure, no markdown, no extra text:
       throw new Error(err.error?.message || 'Claude API error');
     }
 
-    let data = await response.json();
-    let messages = [{ role: 'user', content: prompt }];
-
-    while (data.stop_reason === 'tool_use') {
-      messages.push({ role: 'assistant', content: data.content });
-      const toolResults = data.content
-        .filter(b => b.type === 'tool_use')
-        .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: `Search completed for: ${b.input?.query || 'query'}` }));
-      messages.push({ role: 'user', content: toolResults });
-
-      const followUp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 5000, tools: [{ type: 'web_search_20250305', name: 'web_search' }], messages })
-      });
-      data = await followUp.json();
-    }
-
+    const data = await response.json();
     const rawText = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
     const jsonMatch = rawText.match(/\{[\s\S]*\}/);
     const structured = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
 
-    // Build photo map from Google Maps results
+    if (!structured) throw new Error('Could not parse itinerary. Please try again.');
+
+    // Build photo map keyed by place name
     const photoMap = {};
     [...attractions, ...restaurants].forEach(p => {
       if (p.photo_url) photoMap[p.name] = p.photo_url;
