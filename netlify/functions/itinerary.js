@@ -17,7 +17,7 @@ exports.handler = async (event) => {
   }
 
   // ----------------------------------------------------------------
-  //  CITY VALIDATION — Google Maps Geocoding API
+  //  CITY VALIDATION
   // ----------------------------------------------------------------
   async function validateCity(cityInput) {
     if (!googleKey) return { valid: true, formatted: cityInput };
@@ -26,15 +26,12 @@ exports.handler = async (event) => {
       const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${googleKey}`;
       const res = await fetch(url);
       const data = await res.json();
-      if (data.status !== 'OK' || !data.results.length) {
-        return { valid: false, formatted: null };
-      }
+      if (data.status !== 'OK' || !data.results.length) return { valid: false };
       const result = data.results[0];
-      const formatted = result.formatted_address;
       const country = result.address_components.find(c => c.types.includes('country'));
       const isUS = country && country.short_name === 'US';
-      if (!isUS) return { valid: false, formatted, notUS: true };
-      return { valid: true, formatted };
+      if (!isUS) return { valid: false, notUS: true };
+      return { valid: true, formatted: result.formatted_address };
     } catch (e) {
       return { valid: true, formatted: cityInput };
     }
@@ -68,114 +65,94 @@ exports.handler = async (event) => {
   const validatedDestination = destinationCheck.formatted || destination;
 
   // ----------------------------------------------------------------
-  //  TOOL 1 — Real Google Maps: attractions & restaurants
+  //  GOOGLE MAPS — attractions, restaurants with photos & place IDs
   // ----------------------------------------------------------------
-  async function getAttractions(dest) {
-    if (!googleKey) return getSampleAttractions(dest);
-    try {
-      const query = encodeURIComponent(`top tourist attractions in ${dest}`);
-      const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${googleKey}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data.status !== 'OK') return getSampleAttractions(dest);
-      return data.results.slice(0, 8).map(p => ({
-        name: p.name,
-        rating: p.rating || 'N/A',
-        address: p.formatted_address || 'N/A',
-        types: p.types || []
-      }));
-    } catch (e) {
-      return getSampleAttractions(dest);
-    }
-  }
-
-  async function getRestaurants(dest) {
+  async function getPlaces(query, type = null) {
     if (!googleKey) return [];
     try {
-      const query = encodeURIComponent(`best restaurants in ${dest}`);
-      const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&type=restaurant&key=${googleKey}`;
+      const q = encodeURIComponent(query);
+      const typeParam = type ? `&type=${type}` : '';
+      const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${q}${typeParam}&key=${googleKey}`;
       const res = await fetch(url);
       const data = await res.json();
       if (data.status !== 'OK') return [];
-      return data.results.slice(0, 6).map(p => ({
-        name: p.name,
-        rating: p.rating || 'N/A',
-        address: p.formatted_address || 'N/A',
-        price_level: p.price_level || 'N/A'
-      }));
+      return data.results.slice(0, 8).map(p => {
+        const photoRef = p.photos && p.photos[0] ? p.photos[0].photo_reference : null;
+        const photoUrl = photoRef
+          ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${photoRef}&key=${googleKey}`
+          : null;
+        const mapsUrl = `https://www.google.com/maps/place/?q=place_id:${p.place_id}`;
+        return {
+          name: p.name,
+          rating: p.rating || 'N/A',
+          address: p.formatted_address || 'N/A',
+          place_id: p.place_id,
+          photo_url: photoUrl,
+          maps_url: mapsUrl,
+          types: p.types || []
+        };
+      });
     } catch (e) {
       return [];
     }
   }
 
-  function getSampleAttractions(dest) {
-    const city = dest.split(',')[0].trim();
-    return [
-      { name: `${city} Art Museum`, rating: 4.7, address: `Downtown ${city}`, types: ['museum'] },
-      { name: `${city} Botanical Garden`, rating: 4.6, address: `${city}`, types: ['park'] },
-      { name: `${city} History Museum`, rating: 4.5, address: `${city}`, types: ['museum'] },
-      { name: `${city} Waterfront`, rating: 4.8, address: `${city}`, types: ['landmark'] },
-      { name: `${city} Central Park`, rating: 4.6, address: `${city}`, types: ['park'] },
-      { name: `${city} Old Town`, rating: 4.4, address: `${city}`, types: ['neighborhood'] },
-    ];
-  }
-
-  // ----------------------------------------------------------------
-  //  Gather Google Maps data in parallel
-  // ----------------------------------------------------------------
   const [attractions, restaurants] = await Promise.all([
-    getAttractions(validatedDestination),
-    getRestaurants(validatedDestination)
+    getPlaces(`top tourist attractions in ${validatedDestination}`),
+    getPlaces(`best restaurants in ${validatedDestination}`, 'restaurant')
   ]);
 
-  const departureCity = validatedDeparture.split(',')[0].trim();
   const destinationCity = validatedDestination.split(',')[0].trim();
+  const departureCity = validatedDeparture.split(',')[0].trim();
   const flightBudget = Math.round(budget * 0.35);
   const hotelNightly = Math.round((budget * 0.40) / days);
 
   // ----------------------------------------------------------------
-  //  TOOL 2 — Claude with web search for REAL flights AND hotels
-  //  No sample data — everything comes from web search
+  //  CLAUDE with web search — returns structured JSON
   // ----------------------------------------------------------------
-  const prompt = `You are an expert travel planner. Use your web search tool to find REAL flight and hotel options for this trip. Do not make up or estimate prices — search for actual current information.
+  const prompt = `You are an expert travel planner. Use web search to find REAL flight and hotel info. Return a structured JSON response only.
 
-USER TRIP DETAILS:
-- Departing from: ${validatedDeparture}
-- Destination: ${validatedDestination}
-- Total budget: $${Number(budget).toLocaleString()}
-- Trip length: ${days} days
-- Max flight budget: $${flightBudget} roundtrip per person
+TRIP:
+- From: ${validatedDeparture}
+- To: ${validatedDestination}
+- Budget: $${Number(budget).toLocaleString()}
+- Days: ${days}
+- Max flight budget: $${flightBudget} roundtrip
 - Max hotel budget: $${hotelNightly}/night
 
-STEP 1 — Search for: "roundtrip flights ${departureCity} to ${destinationCity} 2026 price"
-Find real airlines, real typical price ranges, and flight duration.
+STEP 1: Search "roundtrip flights ${departureCity} to ${destinationCity} 2026 price"
+STEP 2: Search "best hotels ${destinationCity} under $${hotelNightly} per night reviews"
 
-STEP 2 — Search for: "best hotels in ${destinationCity} under $${hotelNightly} per night"
-Find real hotel names, real nightly rates, and guest ratings. Do NOT use "Hyatt Place [city]" or any generic placeholder — only use hotel names you actually find in search results.
+REAL PLACES from Google Maps (use these for the itinerary, include name and maps_url exactly as given):
+Attractions: ${JSON.stringify(attractions.map(a => ({ name: a.name, rating: a.rating, address: a.address, maps_url: a.maps_url })))}
+Restaurants: ${JSON.stringify(restaurants.map(r => ({ name: r.name, rating: r.rating, address: r.address, maps_url: r.maps_url })))}
 
-STEP 3 — Use these REAL attractions and restaurants from Google Maps to build the itinerary:
-Attractions: ${JSON.stringify(attractions, null, 2)}
-Restaurants: ${JSON.stringify(restaurants, null, 2)}
-
-FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
-
-## Trip Summary
-[${validatedDeparture} to ${validatedDestination}, ${days} days, estimated total cost]
-
-## Flights
-[List 2-3 real airlines with real typical price ranges found in search. Include flight duration and a booking tip.]
-
-## Hotels
-[List 2-3 real hotels found in search with real nightly rates and a brief reason why each is a good fit. No generic placeholder names.]
-
-## Day-by-Day Itinerary
-[For each day: Morning / Afternoon / Evening using the real Google Maps places above]
-
-## Budget Breakdown
-[Flights | Hotel (${days} nights) | Food & Activities | Total]
-
-## Local Tips
-[3 practical tips specific to ${validatedDestination}]`;
+Return ONLY valid JSON in this exact structure, no markdown, no extra text:
+{
+  "summary": "string describing the trip and total estimated cost",
+  "flights": [
+    { "airline": "string", "price": "string e.g. $97-$142 roundtrip", "duration": "string", "tip": "string" }
+  ],
+  "hotels": [
+    { "name": "real hotel name from search", "price": "string e.g. $99/night", "rating": "string", "highlight": "string", "tip": "string" }
+  ],
+  "days": [
+    {
+      "day": 1,
+      "title": "string e.g. Arrival & The Loop",
+      "morning": { "activity": "string", "place": "exact place name from Google Maps list", "maps_url": "exact maps_url from Google Maps list or empty string" },
+      "afternoon": { "activity": "string", "place": "exact place name", "maps_url": "exact maps_url or empty string" },
+      "evening": { "activity": "string", "place": "exact restaurant name", "maps_url": "exact maps_url or empty string" }
+    }
+  ],
+  "budget_breakdown": {
+    "flights": "string",
+    "hotel": "string",
+    "food_activities": "string",
+    "total": "string"
+  },
+  "tips": ["string", "string", "string"]
+}`;
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -201,53 +178,35 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
     let data = await response.json();
     let messages = [{ role: 'user', content: prompt }];
 
-    // Keep going until Claude finishes all searches and gives final answer
     while (data.stop_reason === 'tool_use') {
       messages.push({ role: 'assistant', content: data.content });
-
       const toolResults = data.content
         .filter(b => b.type === 'tool_use')
-        .map(b => ({
-          type: 'tool_result',
-          tool_use_id: b.id,
-          content: `Search completed for: ${b.input?.query || 'query'}`
-        }));
-
+        .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: `Search completed for: ${b.input?.query || 'query'}` }));
       messages.push({ role: 'user', content: toolResults });
 
       const followUp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': anthropicKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 5000,
-          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-          messages
-        })
+        headers: { 'Content-Type': 'application/json', 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 5000, tools: [{ type: 'web_search_20250305', name: 'web_search' }], messages })
       });
-
       data = await followUp.json();
     }
 
-    // Extract final text
-    const itinerary = data.content
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
-      .join('\n');
+    const rawText = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    const structured = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+
+    // Build photo map from Google Maps results
+    const photoMap = {};
+    [...attractions, ...restaurants].forEach(p => {
+      if (p.photo_url) photoMap[p.name] = p.photo_url;
+    });
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        itinerary,
-        usingRealData: true,
-        validatedDeparture,
-        validatedDestination
-      })
+      body: JSON.stringify({ structured, photoMap, validatedDeparture, validatedDestination })
     };
 
   } catch (err) {
