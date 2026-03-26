@@ -162,7 +162,7 @@ Return ONLY valid JSON, no markdown, no extra text:
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-5',
         max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }]
       })
@@ -193,6 +193,7 @@ Return ONLY valid JSON, no markdown, no extra text:
     };
 
   } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    console.error("Function error:", err);
+    return { statusCode: 500, body: JSON.stringify({ error: err.message || "Unknown error" }) };
   }
 };
