@@ -70,14 +70,14 @@ exports.handler = async (event) => {
   // ----------------------------------------------------------------
   //  TOOL 1 — Real Google Maps Places API
   // ----------------------------------------------------------------
-  async function getAttractions(destination) {
-    if (!googleKey) return getSampleAttractions(destination);
+  async function getAttractions(dest) {
+    if (!googleKey) return getSampleAttractions(dest);
     try {
-      const query = encodeURIComponent(`top tourist attractions in ${destination}`);
+      const query = encodeURIComponent(`top tourist attractions in ${dest}`);
       const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${googleKey}`;
       const res = await fetch(url);
       const data = await res.json();
-      if (data.status !== 'OK') return getSampleAttractions(destination);
+      if (data.status !== 'OK') return getSampleAttractions(dest);
       return data.results.slice(0, 8).map(p => ({
         name: p.name,
         rating: p.rating || 'N/A',
@@ -85,14 +85,14 @@ exports.handler = async (event) => {
         types: p.types || []
       }));
     } catch (e) {
-      return getSampleAttractions(destination);
+      return getSampleAttractions(dest);
     }
   }
 
-  async function getRestaurants(destination) {
+  async function getRestaurants(dest) {
     if (!googleKey) return [];
     try {
-      const query = encodeURIComponent(`best restaurants in ${destination}`);
+      const query = encodeURIComponent(`best restaurants in ${dest}`);
       const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&type=restaurant&key=${googleKey}`;
       const res = await fetch(url);
       const data = await res.json();
@@ -108,31 +108,8 @@ exports.handler = async (event) => {
     }
   }
 
-  // ----------------------------------------------------------------
-  //  TOOL 2 — Flight & hotel data (budget-scaled)
-  // ----------------------------------------------------------------
-  function getSampleFlights(departure, destination, budget) {
-    const from = departure.split(',')[0].trim().substring(0, 3).toUpperCase();
-    const to = destination.split(',')[0].trim().substring(0, 3).toUpperCase();
-    return [
-      { airline: 'Delta Airlines', route: `${from} → ${to}`, price_roundtrip: Math.round(budget * 0.28), stops: 'Nonstop', departure_time: '7:00 AM' },
-      { airline: 'United Airlines', route: `${from} → ${to}`, price_roundtrip: Math.round(budget * 0.22), stops: '1 stop', departure_time: '11:15 AM' },
-      { airline: 'American Airlines', route: `${from} → ${to}`, price_roundtrip: Math.round(budget * 0.25), stops: 'Nonstop', departure_time: '6:00 PM' },
-    ].filter(f => f.price_roundtrip <= budget * 0.4);
-  }
-
-  function getSampleHotels(destination, budget, days) {
-    const city = destination.split(',')[0].trim();
-    const nightly = Math.round((budget * 0.4) / days);
-    return [
-      { name: `Marriott ${city}`, stars: 4, price_per_night: Math.round(nightly * 1.1), amenities: ['Free WiFi', 'Pool', 'Gym'] },
-      { name: `Hilton Garden Inn ${city}`, stars: 3, price_per_night: Math.round(nightly * 0.85), amenities: ['Free WiFi', 'Parking'] },
-      { name: `Hyatt Place ${city}`, stars: 3, price_per_night: Math.round(nightly * 0.75), amenities: ['Free WiFi', 'Free Breakfast'] },
-    ];
-  }
-
-  function getSampleAttractions(destination) {
-    const city = destination.split(',')[0].trim();
+  function getSampleAttractions(dest) {
+    const city = dest.split(',')[0].trim();
     return [
       { name: `${city} Art Museum`, rating: 4.7, address: `Downtown ${city}`, types: ['museum'] },
       { name: `${city} Botanical Garden`, rating: 4.6, address: `${city}`, types: ['park'] },
@@ -144,60 +121,57 @@ exports.handler = async (event) => {
   }
 
   // ----------------------------------------------------------------
-  //  Gather all data
+  //  Gather Google Maps data
   // ----------------------------------------------------------------
   const [attractions, restaurants] = await Promise.all([
     getAttractions(validatedDestination),
     getRestaurants(validatedDestination)
   ]);
 
-  const flights = getSampleFlights(validatedDeparture, validatedDestination, budget);
-  const hotels = getSampleHotels(validatedDestination, budget, days);
-  const usingRealData = !!googleKey;
-
   // ----------------------------------------------------------------
-  //  Claude synthesizes everything
+  //  TOOL 2 — Claude with web search for real flights & hotels
   // ----------------------------------------------------------------
-  const prompt = `You are an expert travel planner. Build a complete, practical day-by-day US travel itinerary from this research data.
+  const departureCity = validatedDeparture.split(',')[0].trim();
+  const destinationCity = validatedDestination.split(',')[0].trim();
+  const flightBudget = Math.round(budget * 0.35);
+  const hotelNightly = Math.round((budget * 0.40) / days);
 
-USER INPUT:
+  const prompt = `You are an expert travel planner with access to web search. A user wants to plan a trip and needs real, accurate flight and hotel information.
+
+USER TRIP DETAILS:
 - Departing from: ${validatedDeparture}
 - Destination: ${validatedDestination}
 - Total budget: $${Number(budget).toLocaleString()}
 - Trip length: ${days} days
+- Flight budget: up to $${flightBudget} roundtrip
+- Hotel budget: up to $${hotelNightly}/night
 
-FLIGHT OPTIONS:
-${JSON.stringify(flights, null, 2)}
-
-HOTEL OPTIONS:
-${JSON.stringify(hotels, null, 2)}
-
-TOP ATTRACTIONS (${usingRealData ? 'real data from Google Maps' : 'sample data'}):
+REAL ATTRACTIONS from Google Maps:
 ${JSON.stringify(attractions, null, 2)}
 
-TOP RESTAURANTS (${usingRealData ? 'real data from Google Maps' : 'sample data'}):
+REAL RESTAURANTS from Google Maps:
 ${JSON.stringify(restaurants, null, 2)}
 
-YOUR TASK:
-1. Pick the best-value flight and hotel within budget
-2. Build a detailed day-by-day itinerary using the real attractions and restaurants above
-3. Track spending and stay within the $${Number(budget).toLocaleString()} budget
-4. Write in a friendly, practical tone — like a knowledgeable friend giving advice
-5. Reference the specific real place names from the data above
+YOUR TASKS:
+1. Use web search to find real typical flight prices from ${departureCity} to ${destinationCity} — look for major airlines, typical roundtrip prices, and flight duration
+2. Use web search to find real hotels in ${destinationCity} under $${hotelNightly}/night — look for well-reviewed options with their actual names and typical prices
+3. Build a detailed day-by-day itinerary using the real Google Maps attractions and restaurants above
+4. Keep total cost within $${Number(budget).toLocaleString()}
+5. Write in a friendly, practical tone
 
 FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 
 ## Trip Summary
-[Destination, ${days} days, estimated total cost]
+[${validatedDeparture} to ${validatedDestination}, ${days} days, estimated total cost]
 
 ## Flight
-[Chosen flight, price, brief reason]
+[Real airline options found, typical price range, flight duration, booking tip]
 
 ## Hotel
-[Chosen hotel, nightly rate, total lodging cost, brief reason]
+[Real hotel names found, typical nightly rate, why it's a good fit, booking tip]
 
 ## Day-by-Day Itinerary
-[For each day: Morning / Afternoon / Evening with specific real place names]
+[For each day: Morning / Afternoon / Evening using the real Google Maps places above]
 
 ## Budget Breakdown
 [Flights | Hotel | Food & Activities | Total]
@@ -206,7 +180,8 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 [3 practical tips specific to ${validatedDestination}]`;
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    // First call — Claude searches the web for flights and hotels
+    const searchResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -215,23 +190,74 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
+        max_tokens: 4000,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
         messages: [{ role: 'user', content: prompt }]
       })
     });
 
-    if (!response.ok) {
-      const err = await response.json();
-      return { statusCode: 502, body: JSON.stringify({ error: err.error?.message || 'Claude API error' }) };
+    if (!searchResponse.ok) {
+      const err = await searchResponse.json();
+      throw new Error(err.error?.message || 'Claude API error');
     }
 
-    const data = await response.json();
-    const itinerary = data.content[0].text;
+    const searchData = await searchResponse.json();
+
+    // Extract the final text response from Claude
+    let itinerary = '';
+    for (const block of searchData.content) {
+      if (block.type === 'text') {
+        itinerary += block.text;
+      }
+    }
+
+    // If Claude stopped to use tools, send the full conversation back for final answer
+    if (searchData.stop_reason === 'tool_use') {
+      const toolResults = searchData.content
+        .filter(b => b.type === 'tool_use')
+        .map(b => ({
+          type: 'tool_result',
+          tool_use_id: b.id,
+          content: b.input?.query ? `Search results for: ${b.input.query}` : 'Search completed'
+        }));
+
+      const followUp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': anthropicKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 3000,
+          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+          messages: [
+            { role: 'user', content: prompt },
+            { role: 'assistant', content: searchData.content },
+            { role: 'user', content: toolResults }
+          ]
+        })
+      });
+
+      const followUpData = await followUp.json();
+      itinerary = '';
+      for (const block of followUpData.content) {
+        if (block.type === 'text') {
+          itinerary += block.text;
+        }
+      }
+    }
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ itinerary, usingRealData, validatedDeparture, validatedDestination })
+      body: JSON.stringify({
+        itinerary,
+        usingRealData: true,
+        validatedDeparture,
+        validatedDestination
+      })
     };
 
   } catch (err) {
