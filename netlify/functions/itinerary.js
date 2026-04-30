@@ -93,10 +93,21 @@ exports.handler = async (event) => {
     }
   }
 
+  // Run Google Maps calls in two batches to stay under Netlify 10s timeout
   const [attractions, restaurants] = await Promise.all([
     getPlaces(`top tourist attractions in ${validatedDestination}`),
     getPlaces(`best restaurants in ${validatedDestination}`, 6)
   ]);
+
+  const [extraPlacesRaw] = await Promise.all([
+    getPlaces(`things to do shopping museums parks in ${validatedDestination}`, 9)
+  ]);
+
+  // Remove duplicates between extra and main attractions
+  const attractionNames = new Set(attractions.map(a => a.name));
+  const extraPlaces = extraPlacesRaw
+    .filter(p => !attractionNames.has(p.name))
+    .slice(0, 9);
 
   const flightBudget = Math.round(budget * 0.35);
   const hotelNightly = Math.round((budget * 0.40) / days);
@@ -182,14 +193,14 @@ Return ONLY valid JSON, no markdown, no extra text:
 
     // Build photo map keyed by place name
     const photoMap = {};
-    [...attractions, ...restaurants].forEach(p => {
+    [...attractions, ...restaurants, ...extraPlaces].forEach(p => {
       if (p.photo_url) photoMap[p.name] = p.photo_url;
     });
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ structured, photoMap, validatedDeparture, validatedDestination })
+      body: JSON.stringify({ structured, photoMap, extraPlaces, validatedDeparture, validatedDestination })
     };
 
   } catch (err) {
