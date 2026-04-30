@@ -3,7 +3,7 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  const { email, itinerary, destination, departure, days, budget } = JSON.parse(event.body || '{}');
+  const { email, itinerary, destination, departure, days, budget, extraPlaces } = JSON.parse(event.body || '{}');
 
   if (!email || !itinerary) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing email or itinerary.' }) };
@@ -86,7 +86,26 @@ exports.handler = async (event) => {
     return body;
   }
 
-  const emailBody = parsed ? buildEmailHtml(parsed) : `<pre style="white-space:pre-wrap;font-size:14px;line-height:1.8;">${itinerary}</pre>`;
+  function buildExtraPlacesHtml(places) {
+    if (!places || !places.length) return '';
+    let html = `<h2>🗺️ More Places to Explore</h2>
+      <table style="width:100%;border-collapse:collapse;">`;
+    places.forEach((p, i) => {
+      if (i % 3 === 0) html += `<tr>`;
+      html += `<td style="width:33%;padding:6px;vertical-align:top;">
+        <div style="background:#f5f2ec;border-radius:8px;padding:10px;">
+          <div style="font-size:13px;font-weight:600;color:#0f0e0c;margin-bottom:2px;">${p.name}</div>
+          ${p.rating && p.rating !== 'N/A' ? `<div style="font-size:12px;color:#6b6760;">★ ${p.rating}</div>` : ''}
+          ${p.maps_url ? `<a href="${p.maps_url}" style="font-size:11px;color:#1a6b4a;text-decoration:none;">View on Maps →</a>` : ''}
+        </div>
+      </td>`;
+      if (i % 3 === 2 || i === places.length - 1) html += `</tr>`;
+    });
+    html += `</table>`;
+    return html;
+  }
+
+  const emailBody = (parsed ? buildEmailHtml(parsed) : `<pre style="white-space:pre-wrap;font-size:14px;line-height:1.8;">${itinerary}</pre>`) + buildExtraPlacesHtml(extraPlaces);
 
   // Build a clean HTML email
   const emailHtml = `
