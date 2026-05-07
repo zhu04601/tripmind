@@ -198,12 +198,7 @@
           <input type="number" id="days" placeholder="e.g. 5" min="1" max="30">
         </div>
       </div>
-      <div class="form-grid" style="margin-top:1rem">
-        <div class="form-group">
-          <label>Number of Travelers</label>
-          <input type="number" id="travelers" placeholder="e.g. 2" min="1" max="20" value="1">
-        </div>
-      </div>
+
       <button class="btn-primary" id="generate-btn" onclick="generateItinerary()">Plan my trip &rarr;</button>
       <div class="error-box" id="error-box"></div>
     </div>
@@ -225,10 +220,9 @@
 
   <div id="result-section" style="display:none">
     <div class="card">
-      <div class="summary-grid" style="grid-template-columns:repeat(4,1fr)">
+      <div class="summary-grid">
         <div class="summary-card"><div class="s-label">From</div><div class="s-value" id="res-from">—</div></div>
         <div class="summary-card"><div class="s-label">To</div><div class="s-value" id="res-to">—</div></div>
-        <div class="summary-card"><div class="s-label">Travelers</div><div class="s-value" id="res-travelers">—</div></div>
         <div class="summary-card"><div class="s-label">Budget</div><div class="s-value" id="res-budget">—</div></div>
       </div>
       <div id="itinerary-body"></div>
@@ -482,7 +476,6 @@ async function generateItinerary() {
   const destination = document.getElementById('destination').value.trim();
   const budget = parseFloat(document.getElementById('budget').value);
   const days = parseInt(document.getElementById('days').value);
-  const travelers = parseInt(document.getElementById('travelers').value) || 1;
 
   if (!departure) return showError('Please enter your departure city.');
   if (!destination) return showError('Please enter a destination.');
@@ -499,7 +492,7 @@ async function generateItinerary() {
     const res = await fetch('/api/itinerary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ departure, destination, budget, days, travelers })
+      body: JSON.stringify({ departure, destination, budget, days, travelers: 1 })
     });
 
     clearInterval(timer);
@@ -515,11 +508,10 @@ async function generateItinerary() {
     document.getElementById('res-from').textContent = dep;
     document.getElementById('res-to').textContent = dest;
     document.getElementById('res-budget').textContent = `$${budget.toLocaleString()}`;
-    document.getElementById('res-travelers').textContent = travelers === 1 ? '1 person' : `${travelers} people`;
 
 
     if (data.structured) {
-      window._lastItinerary = { data, departure, destination, budget, days, travelers };
+      window._lastItinerary = { data, departure, destination, budget, days };
       renderItinerary(data.structured, data.photoMap || {});
 
       renderExtraPlaces(data.extraPlaces || [], data.photoMap || {});
@@ -546,7 +538,6 @@ function reset() {
   document.getElementById('destination').value = '';
   document.getElementById('budget').value = '';
   document.getElementById('days').value = '';
-  document.getElementById('travelers').value = '1';
   document.getElementById('itinerary-body').innerHTML = '';
   document.getElementById('email-btn').style.display = 'none';
   window._lastItinerary = null;
