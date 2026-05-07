@@ -3,7 +3,7 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  const { email, itinerary, destination, departure, days, budget, extraPlaces } = JSON.parse(event.body || '{}');
+  const { email, itinerary, destination, departure, days, budget, extraPlaces, weather, departureDate, returnDate } = JSON.parse(event.body || '{}');
 
   if (!email || !itinerary) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing email or itinerary.' }) };
@@ -86,6 +86,35 @@ exports.handler = async (event) => {
     return body;
   }
 
+  function buildWeatherHtml(forecast) {
+    if (!forecast || !forecast.length) return '';
+    function wIcon(code) {
+      if (code >= 200 && code < 300) return '⛈️';
+      if (code >= 500 && code < 600) return '🌧️';
+      if (code >= 600 && code < 700) return '❄️';
+      if (code === 800) return '☀️';
+      if (code === 801) return '🌤️';
+      if (code >= 802) return '☁️';
+      return '🌡️';
+    }
+    let html = `<h2>🌤️ Weather Forecast</h2><table style="width:100%;border-collapse:collapse;">`;
+    forecast.forEach((day, i) => {
+      if (i % 4 === 0) html += '<tr>';
+      const date = new Date(day.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      html += `<td style="padding:6px;text-align:center;vertical-align:top;">
+        <div style="background:#f5f2ec;border-radius:8px;padding:8px;">
+          <div style="font-size:11px;color:#6b6760;">${date}</div>
+          <div style="font-size:1.4rem;">${wIcon(day.weather_code)}</div>
+          <div style="font-size:13px;font-weight:600;">${Math.round(day.temp_max)}°/${Math.round(day.temp_min)}°F</div>
+          <div style="font-size:11px;color:#6b6760;">${day.description}</div>
+        </div>
+      </td>`;
+      if (i % 4 === 3 || i === forecast.length - 1) html += '</tr>';
+    });
+    html += '</table>';
+    return html;
+  }
+
   function buildExtraPlacesHtml(places) {
     if (!places || !places.length) return '';
     let html = `<h2>🗺️ More Places to Explore</h2>
@@ -105,7 +134,7 @@ exports.handler = async (event) => {
     return html;
   }
 
-  const emailBody = (parsed ? buildEmailHtml(parsed) : `<pre style="white-space:pre-wrap;font-size:14px;line-height:1.8;">${itinerary}</pre>`) + buildExtraPlacesHtml(extraPlaces);
+  const emailBody = (parsed ? buildEmailHtml(parsed) : `<pre style="white-space:pre-wrap;font-size:14px;line-height:1.8;">${itinerary}</pre>`) + buildWeatherHtml(weather) + buildExtraPlacesHtml(extraPlaces);
 
   // Build a clean HTML email
   const emailHtml = `
@@ -116,7 +145,7 @@ exports.handler = async (event) => {
   <div style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;">
     <div style="background:#1a6b4a;color:#fff;padding:28px 32px;">
       <h1 style="font-size:24px;margin:0 0 6px;letter-spacing:-0.02em;">Your TripMind Itinerary ✈️</h1>
-      <p style="font-size:14px;opacity:0.85;margin:0;">${departure} → ${destination} · ${days} days · $${Number(budget).toLocaleString()} budget</p>
+      <p style="font-size:14px;opacity:0.85;margin:0;">${departure} → ${destination} · ${departureDate ? departureDate + ' to ' + (returnDate || '') + ' · ' : ''}${days} days · $${Number(budget).toLocaleString()} budget</p>
     </div>
     <div style="padding:28px 32px;">
       <style>h2{font-size:18px;color:#1a6b4a;margin:24px 0 10px;border-bottom:1px solid #ece8df;padding-bottom:8px;}</style>
@@ -139,7 +168,7 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         from: 'TripMind <onboarding@resend.dev>',
         to: [email],
-        subject: `Your ${destination} Itinerary — TripMind`,
+        subject: `Your ${destination} Itinerary${departureDate ? ' · ' + departureDate : ''} — TripMind`,
         html: emailHtml
       })
     });
