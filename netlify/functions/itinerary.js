@@ -134,7 +134,6 @@ Attractions: ${JSON.stringify(attractions.map(a => ({ name: a.name, rating: a.ra
 Restaurants: ${JSON.stringify(restaurants.map(r => ({ name: r.name, rating: r.rating, maps_url: r.maps_url })))}
 
 Using your knowledge of this specific route (${departureCity} to ${destinationCity}), provide:
-Using your knowledge of this specific route (${departureCity} to ${destinationCity}), also provide:
 1. Realistic flight options with typical prices for this route (use real airlines that serve this route)
 2. Real hotel names in ${destinationCity} that fit the budget (use actual well-known hotels)
 3. A day-by-day itinerary using the real Google Maps places above
@@ -163,7 +162,7 @@ Return ONLY valid JSON, no markdown, no extra text:
     "food_activities": "string",
     "total": "string"
   },
-  "tips": ["string", "string", "string"]
+  "tips": ["string x6 — include weather/temp tip, packing tip, transport tip, money-saving tip, dining tip, and one unique local insider tip"]
 }`;
 
   try {
