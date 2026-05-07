@@ -3,7 +3,8 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  const { departure, destination, budget, days, travelers = 1 } = JSON.parse(event.body || '{}');
+  const { departure, destination, budget, days } = JSON.parse(event.body || '{}');
+  const travelers = 1;
 
   if (!departure || !destination || !budget || !days) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing required fields.' }) };
