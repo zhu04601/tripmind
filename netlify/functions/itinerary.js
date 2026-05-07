@@ -3,7 +3,7 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  const { departure, destination, budget, days } = JSON.parse(event.body || '{}');
+  const { departure, destination, budget, days, travelers = 1 } = JSON.parse(event.body || '{}');
 
   if (!departure || !destination || !budget || !days) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing required fields.' }) };
@@ -110,8 +110,9 @@ exports.handler = async (event) => {
     .filter(p => !attractionNames.has(p.name))
     .slice(0, 9);
 
-  const flightBudget = Math.round(budget * 0.35);
-  const hotelNightly = Math.round((budget * 0.40) / days);
+  const flightBudget = Math.round((budget * 0.35) / travelers); // per person
+  const hotelNightly = Math.round((budget * 0.40) / days); // total room rate
+  const perPersonBudget = Math.round(budget / travelers);
   const departureCity = validatedDeparture.split(',')[0].trim();
   const destinationCity = validatedDestination.split(',')[0].trim();
 
@@ -124,19 +125,22 @@ exports.handler = async (event) => {
 TRIP:
 - From: ${validatedDeparture}
 - To: ${validatedDestination}
-- Total budget: $${Number(budget).toLocaleString()}
+- Total budget: $${Number(budget).toLocaleString()} (for ${travelers} traveler${travelers > 1 ? 's' : ''})
+- Budget per person: $${perPersonBudget.toLocaleString()}
 - Days: ${days}
-- Max flight budget: $${flightBudget} roundtrip
-- Max hotel budget: $${hotelNightly}/night
+- Max flight budget: $${flightBudget} per person roundtrip
+- Max hotel budget: $${hotelNightly}/night (total room rate)
+- Number of travelers: ${travelers}
 
 REAL PLACES from Google Maps (use these exactly for the itinerary):
 Attractions: ${JSON.stringify(attractions.map(a => ({ name: a.name, rating: a.rating, maps_url: a.maps_url })))}
 Restaurants: ${JSON.stringify(restaurants.map(r => ({ name: r.name, rating: r.rating, maps_url: r.maps_url })))}
 
 Using your knowledge of this specific route (${departureCity} to ${destinationCity}), provide:
-1. Realistic flight options with typical prices for this route (use real airlines that serve this route)
-2. Real hotel names in ${destinationCity} that fit the budget (use actual well-known hotels)
+1. Realistic flight options with typical prices for this route — show price PER PERSON and total for ${travelers} traveler${travelers > 1 ? 's' : ''} (use real airlines that serve this route)
+2. Real hotel names in ${destinationCity} that fit the budget — consider room options for ${travelers} traveler${travelers > 1 ? 's' : ''} (use actual well-known hotels)
 3. A day-by-day itinerary using the real Google Maps places above
+4. Budget breakdown must show both per-person cost AND total cost for all ${travelers} traveler${travelers > 1 ? 's' : ''}
 
 Return ONLY valid JSON, no markdown, no extra text:
 {
@@ -157,10 +161,11 @@ Return ONLY valid JSON, no markdown, no extra text:
     }
   ],
   "budget_breakdown": {
-    "flights": "string",
-    "hotel": "string",
-    "food_activities": "string",
-    "total": "string"
+    "flights": "string e.g. $200/person x ${travelers} = $400 total",
+    "hotel": "string e.g. $120/night x ${days} nights = $480",
+    "food_activities": "string e.g. $60/person/day x ${travelers} = $180/day",
+    "total": "string — total for all ${travelers} traveler${travelers > 1 ? 's' : ''}",
+    "per_person": "string — cost per person"
   },
   "tips": ["string x6 — include weather/temp tip, packing tip, transport tip, money-saving tip, dining tip, and one unique local insider tip"]
 }`;
