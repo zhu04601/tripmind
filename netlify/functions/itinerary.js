@@ -102,7 +102,7 @@ exports.handler = async (event) => {
 
 
   const [extraPlacesRaw] = await Promise.all([
-    getPlaces(`things to do shopping museums parks in ${validatedDestination}`, 9)
+    getPlaces(`things to do shopping museums parks in ${validatedDestination}`, 15)
   ]);
 
   // Remove duplicates between extra and main attractions
@@ -138,16 +138,15 @@ Attractions: ${JSON.stringify(attractions.map(a => ({ name: a.name, rating: a.ra
 Restaurants: ${JSON.stringify(restaurants.map(r => ({ name: r.name, rating: r.rating, maps_url: r.maps_url })))}
 
 Using your knowledge of this specific route (${departureCity} to ${destinationCity}), provide:
-1. Realistic flight options with typical prices for this route — show price PER PERSON and total for ${travelers} traveler${travelers > 1 ? 's' : ''} (use real airlines that serve this route)
-2. Real hotel names in ${destinationCity} that fit the budget — consider room options for ${travelers} traveler${travelers > 1 ? 's' : ''} (use actual well-known hotels)
+1. Realistic flight options with typical roundtrip prices for this route — just show the price simply e.g. "$180 roundtrip", no "per person" or "traveler" language
+2. Real hotel names in ${destinationCity} that fit the budget (use actual well-known hotels)
 3. A day-by-day itinerary using the real Google Maps places above
-4. Budget breakdown must show both per-person cost AND total cost for all ${travelers} traveler${travelers > 1 ? 's' : ''}
 
 Return ONLY valid JSON, no markdown, no extra text:
 {
   "summary": "string",
   "flights": [
-    { "airline": "string", "price": "string", "duration": "string", "tip": "string" }
+    { "airline": "string", "price": "string e.g. $180 roundtrip — no per person or traveler language", "duration": "string e.g. 1h 15m each way", "tip": "string" }
   ],
   "hotels": [
     { "name": "real hotel name", "price": "string e.g. $120/night", "rating": "string", "highlight": "string" }
@@ -162,11 +161,10 @@ Return ONLY valid JSON, no markdown, no extra text:
     }
   ],
   "budget_breakdown": {
-    "flights": "string e.g. $200/person x ${travelers} = $400 total",
+    "flights": "string e.g. $200 roundtrip",
     "hotel": "string e.g. $120/night x ${days} nights = $480",
-    "food_activities": "string e.g. $60/person/day x ${travelers} = $180/day",
-    "total": "string — total for all ${travelers} traveler${travelers > 1 ? 's' : ''}",
-    "per_person": "string — cost per person"
+    "food_activities": "string e.g. estimated $300",
+    "total": "string e.g. $980 total"
   },
   "tips": ["string x6 — include weather/temp tip, packing tip, transport tip, money-saving tip, dining tip, and one unique local insider tip"]
 }`;
