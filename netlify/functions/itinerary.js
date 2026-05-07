@@ -201,11 +201,7 @@ Return ONLY valid JSON, no markdown, no extra text:
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ structured, photoMap, extraPlaces, validatedDeparture, validatedDestination })
-      };
+      body: JSON.stringify({ structured, photoMap, extraPlaces, validatedDeparture, validatedDestination })
     };
 
   } catch (err) {
