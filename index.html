@@ -111,6 +111,19 @@
   .btn-reset { display: inline-block; margin-top: 1.25rem; padding: 10px 20px; background: transparent; border: 1px solid var(--border); border-radius: 10px; font-family: 'DM Sans', sans-serif; font-size: 14px; color: var(--ink-muted); cursor: pointer; transition: background 0.15s; }
   .btn-reset:hover { background: var(--sand); }
 
+  /* Date inputs */
+  input[type="date"] { width: 100%; padding: 11px 14px; border: 1px solid var(--border); border-radius: 10px; font-family: 'DM Sans', sans-serif; font-size: 15px; color: var(--ink); background: var(--sand); outline: none; transition: border-color 0.15s, background 0.15s; }
+  input[type="date"]:focus { border-color: var(--accent); background: #fff; }
+
+  /* Weather section */
+  .weather-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 0.5rem; }
+  .weather-day { background: var(--sand); border-radius: 12px; padding: 0.75rem 1rem; text-align: center; flex-shrink: 0; min-width: 80px; }
+  .weather-date { font-size: 11px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+  .weather-icon { font-size: 1.6rem; margin-bottom: 4px; }
+  .weather-temp { font-family: 'DM Serif Display', serif; font-size: 1.1rem; color: var(--ink); }
+  .weather-desc { font-size: 11px; color: var(--ink-muted); margin-top: 2px; }
+  .weather-note { font-size: 12px; color: var(--ink-muted); background: var(--sand); border-radius: 8px; padding: 8px 12px; margin-top: 8px; }
+
   /* Extra places */
   .extra-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
   .extra-card { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); cursor: pointer; text-decoration: none; display: block; transition: transform 0.15s, box-shadow 0.15s; }
@@ -177,6 +190,16 @@
       </div>
       <div class="form-grid">
         <div class="form-group">
+          <label>Departure Date</label>
+          <input type="date" id="departure-date">
+        </div>
+        <div class="form-group">
+          <label>Return Date</label>
+          <input type="date" id="return-date">
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
           <label>Total Budget (USD)</label>
           <input type="number" id="budget" placeholder="e.g. 1500" min="200">
         </div>
@@ -199,16 +222,18 @@
         <li id="ls2"><div class="dot"></div>Searching real flights online</li>
         <li id="ls3"><div class="dot"></div>Finding top-rated hotels</li>
         <li id="ls4"><div class="dot"></div>Fetching attractions from Google Maps</li>
-        <li id="ls5"><div class="dot"></div>Building your itinerary</li>
+        <li id="ls5"><div class="dot"></div>Checking weather forecast</li>
+        <li id="ls6"><div class="dot"></div>Building your itinerary</li>
       </ul>
     </div>
   </div>
 
   <div id="result-section" style="display:none">
     <div class="card">
-      <div class="summary-grid">
+      <div class="summary-grid" style="grid-template-columns:repeat(4,1fr)">
         <div class="summary-card"><div class="s-label">From</div><div class="s-value" id="res-from">—</div></div>
         <div class="summary-card"><div class="s-label">To</div><div class="s-value" id="res-to">—</div></div>
+        <div class="summary-card"><div class="s-label">Dates</div><div class="s-value" id="res-dates" style="font-size:0.95rem">—</div></div>
         <div class="summary-card"><div class="s-label">Budget</div><div class="s-value" id="res-budget">—</div></div>
       </div>
       <div id="itinerary-body"></div>
@@ -342,6 +367,53 @@ function renderItinerary(data, photoMap) {
   div.innerHTML = html;
 }
 
+function weatherIcon(code) {
+  if (code >= 200 && code < 300) return '⛈️';
+  if (code >= 300 && code < 400) return '🌦️';
+  if (code >= 500 && code < 600) return '🌧️';
+  if (code >= 600 && code < 700) return '❄️';
+  if (code >= 700 && code < 800) return '🌫️';
+  if (code === 800) return '☀️';
+  if (code === 801) return '🌤️';
+  if (code >= 802) return '☁️';
+  return '🌡️';
+}
+
+function renderWeather(forecast) {
+  const existing = document.getElementById('weather-section');
+  if (existing) existing.remove();
+
+  const section = document.createElement('div');
+  section.id = 'weather-section';
+  section.innerHTML = `<div class="section-title" style="margin-top:1.75rem">🌤️ Weather forecast</div>`;
+
+  const strip = document.createElement('div');
+  strip.className = 'weather-strip';
+
+  forecast.forEach(day => {
+    const card = document.createElement('div');
+    card.className = 'weather-day';
+    const date = new Date(day.date + 'T12:00:00');
+    const label = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    card.innerHTML = `
+      <div class="weather-date">${label}</div>
+      <div class="weather-icon">${weatherIcon(day.weather_code)}</div>
+      <div class="weather-temp">${Math.round(day.temp_max)}° / ${Math.round(day.temp_min)}°F</div>
+      <div class="weather-desc">${day.description}</div>
+    `;
+    strip.appendChild(card);
+  });
+
+  section.appendChild(strip);
+
+  const note = document.createElement('div');
+  note.className = 'weather-note';
+  note.textContent = 'Forecast shown for your travel dates. Pack accordingly!';
+  section.appendChild(note);
+
+  document.getElementById('itinerary-body').appendChild(section);
+}
+
 function renderExtraPlaces(places, photoMap) {
   if (!places || !places.length) return;
   const section = document.createElement('div');
@@ -372,11 +444,16 @@ async function generateItinerary() {
   clearError();
   const departure = document.getElementById('departure').value.trim();
   const destination = document.getElementById('destination').value.trim();
+  const departureDate = document.getElementById('departure-date').value;
+  const returnDate = document.getElementById('return-date').value;
   const budget = parseFloat(document.getElementById('budget').value);
   const days = parseInt(document.getElementById('days').value);
 
   if (!departure) return showError('Please enter your departure city.');
   if (!destination) return showError('Please enter a destination.');
+  if (!departureDate) return showError('Please select a departure date.');
+  if (!returnDate) return showError('Please select a return date.');
+  if (new Date(returnDate) <= new Date(departureDate)) return showError('Return date must be after departure date.');
   if (!budget || budget < 200) return showError('Please enter a valid budget (minimum $200).');
   if (!days || days < 1) return showError('Please enter a valid trip length.');
 
@@ -390,7 +467,7 @@ async function generateItinerary() {
     const res = await fetch('/api/itinerary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ departure, destination, budget, days })
+      body: JSON.stringify({ departure, destination, departureDate, returnDate, budget, days })
     });
 
     clearInterval(timer);
@@ -406,10 +483,15 @@ async function generateItinerary() {
     document.getElementById('res-from').textContent = dep;
     document.getElementById('res-to').textContent = dest;
     document.getElementById('res-budget').textContent = `$${budget.toLocaleString()}`;
+    if (departureDate && returnDate) {
+      const fmt = d => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      document.getElementById('res-dates').textContent = `${fmt(departureDate)} – ${fmt(returnDate)}`;
+    }
 
     if (data.structured) {
-      window._lastItinerary = { data, departure, destination, budget, days };
+      window._lastItinerary = { data, departure, destination, budget, days, departureDate, returnDate };
       renderItinerary(data.structured, data.photoMap || {});
+      if (data.weather && data.weather.length) renderWeather(data.weather);
       renderExtraPlaces(data.extraPlaces || [], data.photoMap || {});
       document.getElementById('email-btn').style.display = 'inline-flex';
     } else {
@@ -432,12 +514,14 @@ function reset() {
   document.getElementById('generate-btn').disabled = false;
   document.getElementById('departure').value = '';
   document.getElementById('destination').value = '';
+  document.getElementById('departure-date').value = '';
+  document.getElementById('return-date').value = '';
   document.getElementById('budget').value = '';
   document.getElementById('days').value = '';
   document.getElementById('itinerary-body').innerHTML = '';
   document.getElementById('email-btn').style.display = 'none';
   window._lastItinerary = null;
-  ['ls1','ls2','ls3','ls4','ls5'].forEach(id => {
+  ['ls1','ls2','ls3','ls4','ls5','ls6'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove('active','done');
   });
@@ -481,7 +565,7 @@ async function sendEmail() {
     const res = await fetch('/api/send-email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, itinerary: itineraryText, destination, departure, budget, days, extraPlaces: data.extraPlaces || [] })
+      body: JSON.stringify({ email, itinerary: itineraryText, destination, departure, budget, days, extraPlaces: data.extraPlaces || [], weather: data.weather || [], departureDate: window._lastItinerary.departureDate, returnDate: window._lastItinerary.returnDate })
     });
     const result = await res.json();
     if (!res.ok || result.error) throw new Error(result.error || 'Failed to send');
