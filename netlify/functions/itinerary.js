@@ -3,7 +3,7 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  const { departure, destination, departureDate, returnDate, budget, days } = JSON.parse(event.body || '{}');
+  const { departure, destination, budget, days } = JSON.parse(event.body || '{}');
 
   if (!departure || !destination || !budget || !days) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing required fields.' }) };
@@ -93,65 +93,12 @@ exports.handler = async (event) => {
     }
   }
 
-  // ----------------------------------------------------------------
-  //  WEATHER — OpenWeatherMap 5-day forecast
-  // ----------------------------------------------------------------
-  async function getWeather(destination, departureDate, returnDate) {
-    const weatherKey = process.env.OPENWEATHER_API_KEY;
-    if (!weatherKey || !departureDate) return [];
-    try {
-      // First geocode the destination to get lat/lon
-      const geoUrl = `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(destination)}&limit=1&appid=${weatherKey}`;
-      const geoRes = await fetch(geoUrl);
-      const geoData = await geoRes.json();
-      if (!geoData.length) return [];
-      const { lat, lon } = geoData[0];
-
-      // Get 5-day forecast
-      const forecastUrl = `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${weatherKey}&units=imperial`;
-      const forecastRes = await fetch(forecastUrl);
-      const forecastData = await forecastRes.json();
-      if (!forecastData.list) return [];
-
-      // Group by date and filter to trip dates
-      const start = new Date(departureDate + 'T00:00:00');
-      const end = new Date((returnDate || departureDate) + 'T23:59:59');
-      const byDate = {};
-
-      forecastData.list.forEach(item => {
-        const date = item.dt_txt.split(' ')[0];
-        const itemDate = new Date(date + 'T12:00:00');
-        if (itemDate >= start && itemDate <= end) {
-          if (!byDate[date]) {
-            byDate[date] = {
-              date,
-              temps: [],
-              weather_code: item.weather[0].id,
-              description: item.weather[0].description
-            };
-          }
-          byDate[date].temps.push(item.main.temp_max, item.main.temp_min);
-        }
-      });
-
-      return Object.values(byDate).map(d => ({
-        date: d.date,
-        temp_max: Math.max(...d.temps),
-        temp_min: Math.min(...d.temps),
-        weather_code: d.weather_code,
-        description: d.description
-      })).slice(0, 7);
-    } catch (e) {
-      return [];
-    }
-  }
-
   // Run Google Maps calls in two batches to stay under Netlify 10s timeout
-  const [attractions, restaurants, weather] = await Promise.all([
+  const [attractions, restaurants] = await Promise.all([
     getPlaces(`top tourist attractions in ${validatedDestination}`),
     getPlaces(`best restaurants in ${validatedDestination}`, 6),
-    getWeather(validatedDestination, departureDate, returnDate)
   ]);
+
 
   const [extraPlacesRaw] = await Promise.all([
     getPlaces(`things to do shopping museums parks in ${validatedDestination}`, 9)
@@ -187,6 +134,7 @@ Attractions: ${JSON.stringify(attractions.map(a => ({ name: a.name, rating: a.ra
 Restaurants: ${JSON.stringify(restaurants.map(r => ({ name: r.name, rating: r.rating, maps_url: r.maps_url })))}
 
 Using your knowledge of this specific route (${departureCity} to ${destinationCity}), provide:
+Using your knowledge of this specific route (${departureCity} to ${destinationCity}), also provide:
 1. Realistic flight options with typical prices for this route (use real airlines that serve this route)
 2. Real hotel names in ${destinationCity} that fit the budget (use actual well-known hotels)
 3. A day-by-day itinerary using the real Google Maps places above
@@ -254,7 +202,11 @@ Return ONLY valid JSON, no markdown, no extra text:
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ structured, photoMap, extraPlaces, weather, validatedDeparture, validatedDestination })
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ structured, photoMap, extraPlaces, validatedDeparture, validatedDestination })
+      };
     };
 
   } catch (err) {
